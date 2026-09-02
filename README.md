@@ -87,6 +87,21 @@ scripts/package-dmg.sh
 swift run
 ```
 
+## Homebrew
+
+发布版本后，可以通过自建 Tap 安装：
+
+```bash
+brew tap JokerNg/tap
+brew install --cask codex-touchbar-monitor
+```
+
+升级：
+
+```bash
+brew upgrade --cask codex-touchbar-monitor
+```
+
 ## 重新生成 App 图标
 
 图标源图为 `Resources/AppIcon.png`，生成 ICNS：
