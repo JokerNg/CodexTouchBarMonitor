@@ -1,0 +1,11 @@
+.build/
+.swiftpm/
+.code-review-graph/
+build/
+backups/
+DerivedData/
+dist/
+*.xcuserdata/
+.DS_Store
+.env
+.env.*
