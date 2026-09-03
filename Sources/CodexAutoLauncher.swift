@@ -4,8 +4,29 @@ enum CodexAutoLauncher {
     private static let launchAgentLabel = "com.wangjiaxuan666.CodexTouchBarMonitor.Launcher"
     private static let appSupportDirectoryName = "CodexTouchBarMonitor"
     private static let manualQuitLockName = "manual-quit.lock"
+    private static let followsCodexLaunchKey = "followsCodexLaunch"
+
+    static var followsCodexLaunch: Bool {
+        guard UserDefaults.standard.object(forKey: followsCodexLaunchKey) != nil else {
+            return true
+        }
+        return UserDefaults.standard.bool(forKey: followsCodexLaunchKey)
+    }
+
+    static func setFollowsCodexLaunch(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: followsCodexLaunchKey)
+        if enabled {
+            installOrUpdate()
+        } else {
+            uninstall()
+        }
+    }
 
     static func installOrUpdate() {
+        guard followsCodexLaunch else {
+            return
+        }
+
         guard let appBundleURL = Bundle.main.bundleURLIfApp else {
             return
         }
@@ -32,6 +53,13 @@ enum CodexAutoLauncher {
         } catch {
             NSLog("CodexTouchBarMonitor failed to install auto launcher: %@", String(describing: error))
         }
+    }
+
+    static func uninstall() {
+        let plistURL = launchAgentsDirectory.appendingPathComponent("\(launchAgentLabel).plist")
+        runLaunchctl(arguments: ["bootout", "gui/\(getuid())", plistURL.path])
+        try? FileManager.default.removeItem(at: plistURL)
+        clearManualQuitLock()
     }
 
     static func clearManualQuitLock() {

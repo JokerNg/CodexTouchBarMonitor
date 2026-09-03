@@ -9,10 +9,12 @@ final class RateLimitStore {
 
     private let client = CodexAppServerClient()
     private var timer: Timer?
+    private var reconnectTimer: Timer?
     private var state = RateLimitDisplayState.initial
     private var refreshInFlight = false
     private var tokenUsageInFlight = false
     private var isStarted = false
+    private let reconnectInterval: TimeInterval = 10
 
     func start() {
         guard !isStarted else {
@@ -24,20 +26,14 @@ final class RateLimitStore {
         client.onRateLimitsUpdated = { [weak self] in
             self?.refresh()
         }
-
-        client.start { [weak self] result in
-            guard let self else {
-                return
-            }
-
-            switch result {
-            case .success:
-                self.refresh()
-                self.startTimer()
-            case .failure:
-                break
-            }
+        client.onProcessTerminated = { [weak self] in
+            self?.handleClientTermination()
         }
+
+        state.connectionState = .connecting
+        state.lastError = nil
+        publish()
+        connect()
     }
 
     func stop() {
@@ -46,10 +42,23 @@ final class RateLimitStore {
         tokenUsageInFlight = false
         timer?.invalidate()
         timer = nil
+        reconnectTimer?.invalidate()
+        reconnectTimer = nil
+        client.onRateLimitsUpdated = nil
+        client.onProcessTerminated = nil
         client.stop()
     }
 
     func refresh() {
+        guard isStarted else {
+            return
+        }
+
+        if state.connectionState == .failed {
+            connect()
+            return
+        }
+
         guard !refreshInFlight else {
             return
         }
@@ -65,9 +74,42 @@ final class RateLimitStore {
 
             switch result {
             case .success(let response):
+                self.state.connectionState = .connected
+                self.state.lastError = nil
                 self.apply(response)
-            case .failure:
-                break
+            case .failure(let error):
+                self.handleFailure(error)
+            }
+        }
+    }
+
+    private func connect() {
+        guard isStarted else {
+            return
+        }
+
+        reconnectTimer?.invalidate()
+        reconnectTimer = nil
+        state.connectionState = .connecting
+        publish()
+
+        client.start { [weak self] result in
+            guard let self else {
+                return
+            }
+
+            switch result {
+            case .success:
+                guard self.isStarted else {
+                    return
+                }
+                self.state.connectionState = .connected
+                self.state.lastError = nil
+                self.publish()
+                self.startTimer()
+                self.refresh()
+            case .failure(let error):
+                self.handleFailure(error)
             }
         }
     }
@@ -89,6 +131,35 @@ final class RateLimitStore {
         state.lastUpdated = Date()
         publish()
         refreshTokenUsage()
+    }
+
+    private func handleClientTermination() {
+        handleFailure(CodexAppServerError.processUnavailable)
+    }
+
+    private func handleFailure(_ error: Error) {
+        guard isStarted else {
+            return
+        }
+
+        refreshInFlight = false
+        tokenUsageInFlight = false
+        client.stop()
+        state.connectionState = .failed
+        state.lastError = error.localizedDescription
+        publish()
+        scheduleReconnect()
+    }
+
+    private func scheduleReconnect() {
+        guard isStarted, reconnectTimer == nil else {
+            return
+        }
+
+        reconnectTimer = Timer.scheduledTimer(withTimeInterval: reconnectInterval, repeats: false) { [weak self] _ in
+            self?.reconnectTimer = nil
+            self?.connect()
+        }
     }
 
     private func classifyWindows(primary: RateLimitWindow?, secondary: RateLimitWindow?) -> (fiveHour: LimitMeter?, weekly: LimitMeter?) {

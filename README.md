@@ -10,6 +10,8 @@ CodexTouchBarMonitor 是一个专注 Touch Bar 的 macOS 工具，通过本机 C
 - Touch Bar 持续显示 5 小时额度、周额度、剩余百分比和重置时间。
 - 显示 Codex 官方 Token 用量，包括昨日用量和账户累计用量。
 - 每 60 秒自动刷新，刷新失败时保留已有数据。
+- app-server 连接失败或进程退出后自动重连，并显示连接状态和最后更新时间。
+- 重置券在最早可用券到期前 3 天内显示为红色。
 - 自动跟随 ChatGPT / Codex 启动和退出。
 - 支持从菜单隐藏 Touch Bar 或隐藏菜单栏图标。
 
@@ -58,7 +60,10 @@ Touch Bar 包括：
 点击菜单栏图标可以：
 
 - 显示或隐藏 Touch Bar。
+- 立即刷新数据。
 - 重新加载 Touch Bar。
+- 开关“随 Codex 自动启动”。
+- 查看连接状态和最后更新时间。
 - 隐藏菜单栏图标；重新打开 App 可恢复。
 - 退出应用。
 
@@ -71,7 +76,7 @@ scripts/build-app.sh
 open build/CodexTouchBarMonitor.app
 ```
 
-构建成功后会生成 `build/CodexTouchBarMonitor.app`。首次手动打开后，应用会安装用户级 LaunchAgent，之后会随 ChatGPT / Codex 自动启动和退出。
+构建成功后会生成 `build/CodexTouchBarMonitor.app`。首次手动打开后，应用默认安装用户级 LaunchAgent，之后会随 ChatGPT / Codex 自动启动和退出；也可以从菜单关闭自动启动。
 
 打包 DMG：
 

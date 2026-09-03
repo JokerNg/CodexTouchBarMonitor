@@ -34,7 +34,11 @@ final class TouchBarRateLimitsView: NSView {
             fiveHourRow.isHidden = true
         } else {
             fiveHourRow.isHidden = false
-            fiveHourRow.updatePlaceholder(title: "5 小时", usageText: "昨--")
+            fiveHourRow.updatePlaceholder(
+                title: "5 小时",
+                usageText: "昨--",
+                statusText: state.connectionState == .failed ? "连接失败" : "连接中…"
+            )
         }
 
         if let weekly = state.weekly {
@@ -53,7 +57,7 @@ final class TouchBarRateLimitsView: NSView {
     }
 
     private func updateResetCreditCard(_ resetCredits: ResetCreditSummary?) {
-        guard let resetCredits else {
+        guard let resetCredits, resetCredits.availableCount > 0 else {
             resetCreditCard.isHidden = true
             return
         }
@@ -61,6 +65,14 @@ final class TouchBarRateLimitsView: NSView {
         resetCreditCountLabel.stringValue = "重置券 ×\(resetCredits.availableCount)"
         resetCreditExpirationLabel.stringValue = resetCredits.expirationText
         resetCreditCard.toolTip = "重置券，\(resetCredits.expirationText)"
+        let color: NSColor = resetCredits.isExpiringSoon
+            ? .systemRed
+            : NSColor(calibratedRed: 0.16, green: 0.86, blue: 1.0, alpha: 1.0)
+        resetCreditIconView.contentTintColor = color
+        resetCreditCountLabel.textColor = color
+        resetCreditExpirationLabel.textColor = resetCredits.isExpiringSoon
+            ? NSColor.systemRed.withAlphaComponent(0.92)
+            : NSColor(calibratedRed: 0.65, green: 0.80, blue: 0.9, alpha: 0.82)
         resetCreditCard.isHidden = false
     }
 
@@ -193,13 +205,13 @@ private final class TouchBarLimitRow: NSView {
         usageLabel.stringValue = usageText
     }
 
-    func updatePlaceholder(title: String, usageText: String) {
+    func updatePlaceholder(title: String, usageText: String, statusText: String = "--") {
         titleLabel.stringValue = title
         batteryBar.isHidden = false
         batteryBar.remainingPercent = 0
         batteryBar.isDimmed = true
         remainingLabel.stringValue = "剩余 --"
-        resetLabel.stringValue = "--"
+        resetLabel.stringValue = statusText
         usageLabel.stringValue = usageText
     }
 

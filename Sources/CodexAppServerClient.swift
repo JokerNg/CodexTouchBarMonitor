@@ -39,6 +39,7 @@ final class CodexAppServerClient {
     private var pendingResponses: [Int: (Result<Any, Error>) -> Void] = [:]
 
     var onRateLimitsUpdated: (() -> Void)?
+    var onProcessTerminated: (() -> Void)?
 
     func start(completion: @escaping (Result<Void, Error>) -> Void) {
         queue.async {
@@ -65,10 +66,15 @@ final class CodexAppServerClient {
             self.outputPipe?.fileHandleForReading.readabilityHandler = nil
             self.errorPipe?.fileHandleForReading.readabilityHandler = nil
             self.inputPipe?.fileHandleForWriting.closeFile()
+            self.process?.terminationHandler = nil
             if self.process?.isRunning == true {
                 self.process?.terminate()
             }
             self.process = nil
+            self.inputPipe = nil
+            self.outputPipe = nil
+            self.errorPipe = nil
+            self.outputBuffer.removeAll(keepingCapacity: false)
             self.pendingResponses.removeAll()
         }
     }
@@ -130,6 +136,7 @@ final class CodexAppServerClient {
         process.standardInput = inputPipe
         process.standardOutput = outputPipe
         process.standardError = errorPipe
+        let processIdentifier = ObjectIdentifier(process)
 
         outputPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
@@ -147,12 +154,27 @@ final class CodexAppServerClient {
 
         process.terminationHandler = { [weak self] _ in
             self?.queue.async {
-                self?.failPendingResponses(CodexAppServerError.processUnavailable)
+                guard let self else {
+                    return
+                }
+
+                let isCurrentProcess = self.process.map(ObjectIdentifier.init) == processIdentifier
+                if isCurrentProcess {
+                    self.process = nil
+                    self.inputPipe = nil
+                    self.outputPipe = nil
+                    self.errorPipe = nil
+                    self.failPendingResponses(CodexAppServerError.processUnavailable)
+                    DispatchQueue.main.async {
+                        self.onProcessTerminated?()
+                    }
+                }
             }
         }
 
         try process.run()
 
+        outputBuffer.removeAll(keepingCapacity: false)
         self.process = process
         self.inputPipe = inputPipe
         self.outputPipe = outputPipe

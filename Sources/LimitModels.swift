@@ -86,19 +86,37 @@ struct RateLimitDisplayState: Equatable {
     var resetCredits: ResetCreditSummary?
     var tokenUsage: TokenUsageSummary?
     var lastUpdated: Date?
+    var connectionState: RateLimitConnectionState
+    var lastError: String?
 
     static let initial = RateLimitDisplayState(
         fiveHour: nil,
         weekly: nil,
         resetCredits: nil,
         tokenUsage: nil,
-        lastUpdated: nil
+        lastUpdated: nil,
+        connectionState: .idle,
+        lastError: nil
     )
+}
+
+enum RateLimitConnectionState: Equatable {
+    case idle
+    case connecting
+    case connected
+    case failed
 }
 
 struct ResetCreditSummary: Equatable {
     let availableCount: Int
     let earliestExpirationDate: Date?
+
+    var isExpiringSoon: Bool {
+        guard let earliestExpirationDate else {
+            return false
+        }
+        return earliestExpirationDate.timeIntervalSinceNow <= 3 * 24 * 60 * 60
+    }
 
     var expirationText: String {
         guard let earliestExpirationDate else {

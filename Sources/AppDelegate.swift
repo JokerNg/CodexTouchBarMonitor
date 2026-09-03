@@ -5,6 +5,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, RateLimitStoreDelegate
     private let store = RateLimitStore()
     private let lifecycleMonitor = CodexLifecycleMonitor()
     private var touchBarVisibilityMenuItem: NSMenuItem?
+    private var connectionStatusMenuItem: NSMenuItem?
+    private var lastUpdatedMenuItem: NSMenuItem?
+    private var autoLaunchMenuItem: NSMenuItem?
     private let touchBarController = TouchBarController()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -35,6 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, RateLimitStoreDelegate
 
     func rateLimitStore(_ store: RateLimitStore, didUpdate state: RateLimitDisplayState) {
         touchBarController.update(with: state)
+        updateRateLimitStatusMenu(with: state)
     }
 
     private func configureStatusItem() {
@@ -55,6 +59,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, RateLimitStoreDelegate
     private func makeStatusMenu() -> NSMenu {
         let menu = NSMenu()
 
+        let connectionStatusItem = NSMenuItem(title: "状态：未连接", action: nil, keyEquivalent: "")
+        connectionStatusItem.isEnabled = false
+        menu.addItem(connectionStatusItem)
+        connectionStatusMenuItem = connectionStatusItem
+
+        let lastUpdatedItem = NSMenuItem(title: "更新于：--", action: nil, keyEquivalent: "")
+        lastUpdatedItem.isEnabled = false
+        menu.addItem(lastUpdatedItem)
+        lastUpdatedMenuItem = lastUpdatedItem
+
+        menu.addItem(.separator())
+
         let visibilityItem = NSMenuItem(
             title: "隐藏 Touch Bar",
             action: #selector(toggleTouchBar(_:)),
@@ -64,6 +80,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, RateLimitStoreDelegate
         menu.addItem(visibilityItem)
         touchBarVisibilityMenuItem = visibilityItem
 
+        let refreshDataItem = NSMenuItem(
+            title: "立即刷新数据",
+            action: #selector(refreshDataFromMenu(_:)),
+            keyEquivalent: ""
+        )
+        refreshDataItem.target = self
+        menu.addItem(refreshDataItem)
+
         let reloadTouchBarItem = NSMenuItem(
             title: "重新加载 Touch Bar",
             action: #selector(reloadTouchBarFromMenu(_:)),
@@ -71,6 +95,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, RateLimitStoreDelegate
         )
         reloadTouchBarItem.target = self
         menu.addItem(reloadTouchBarItem)
+
+        let autoLaunchItem = NSMenuItem(
+            title: "随 Codex 自动启动",
+            action: #selector(toggleAutoLaunchFromMenu(_:)),
+            keyEquivalent: ""
+        )
+        autoLaunchItem.target = self
+        autoLaunchItem.state = CodexAutoLauncher.followsCodexLaunch ? .on : .off
+        menu.addItem(autoLaunchItem)
+        autoLaunchMenuItem = autoLaunchItem
 
         let hideStatusItem = NSMenuItem(
             title: "隐藏菜单栏图标",
@@ -128,6 +162,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, RateLimitStoreDelegate
             : "显示 Touch Bar"
     }
 
+    private func updateRateLimitStatusMenu(with state: RateLimitDisplayState) {
+        switch state.connectionState {
+        case .idle:
+            connectionStatusMenuItem?.title = "状态：未连接"
+        case .connecting:
+            connectionStatusMenuItem?.title = "状态：连接中…"
+        case .connected:
+            connectionStatusMenuItem?.title = "状态：已连接"
+        case .failed:
+            connectionStatusMenuItem?.title = state.lastUpdated == nil
+                ? "状态：连接失败"
+                : "状态：连接失败（保留旧数据）"
+        }
+
+        if let lastUpdated = state.lastUpdated {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "zh_CN")
+            formatter.timeZone = .current
+            formatter.dateFormat = "HH:mm:ss"
+            lastUpdatedMenuItem?.title = "更新于：\(formatter.string(from: lastUpdated))"
+        } else {
+            lastUpdatedMenuItem?.title = "更新于：--"
+        }
+        connectionStatusMenuItem?.toolTip = state.lastError
+    }
+
+    @objc private func refreshDataFromMenu(_ sender: AnyObject?) {
+        store.refresh()
+    }
+
     @objc private func reloadTouchBarFromMenu(_ sender: AnyObject?) {
         touchBarController.hideSystemTouchBar()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
@@ -137,6 +201,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, RateLimitStoreDelegate
             _ = self.touchBarController.showSystemTouchBar()
             self.updateTouchBarMenuTitle()
         }
+    }
+
+    @objc private func toggleAutoLaunchFromMenu(_ sender: NSMenuItem) {
+        CodexAutoLauncher.setFollowsCodexLaunch(sender.state != .on)
+        autoLaunchMenuItem?.state = CodexAutoLauncher.followsCodexLaunch ? .on : .off
     }
 
     @objc private func hideStatusItemFromMenu(_ sender: AnyObject?) {
