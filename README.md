@@ -92,7 +92,7 @@ open build/CodexTouchBarMonitor.app
 scripts/package-dmg.sh
 ```
 
-输出文件为 `dist/CodexTouchBarMonitor-0.1.13.dmg`。当前构建使用 ad-hoc 签名，首次打开时 macOS 可能提示无法验证开发者；可在 Finder 中右键 App，选择“打开”。
+输出文件为 `dist/CodexTouchBarMonitor-0.1.14.dmg`。当前构建使用 ad-hoc 签名，首次打开时 macOS 可能提示无法验证开发者；可在 Finder 中右键 App，选择“打开”。
 
 开发期直接运行：
 
