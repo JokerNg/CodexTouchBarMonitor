@@ -45,6 +45,7 @@ account/usage/read
 ## 兼容性
 
 - macOS 11 Big Sur 或更新版本。
+- 当前 Homebrew/DMG 发布包为 Apple Silicon（arm64）版本。
 - 已安装 ChatGPT、Codex 或 GPT，并且本机 Codex app-server 可用。
 - 需要配备实体 Touch Bar 的 Mac 才能使用。
 
