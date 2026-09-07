@@ -6,6 +6,32 @@ protocol RateLimitStoreDelegate: AnyObject {
 
 final class RateLimitStore {
     weak var delegate: RateLimitStoreDelegate?
+    var onManualRefreshResult: ((Bool) -> Void)?
+    private var manualRefreshPending = false
+    private var manualRefreshTimeout: DispatchWorkItem?
+
+    func refreshManually() {
+        guard !manualRefreshPending else { return }
+        manualRefreshPending = true
+        guard isStarted else {
+            finishManualRefresh(false)
+            return
+        }
+        let timeout = DispatchWorkItem { [weak self] in
+            self?.finishManualRefresh(false)
+        }
+        manualRefreshTimeout = timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + 30, execute: timeout)
+        refresh()
+    }
+
+    private func finishManualRefresh(_ success: Bool) {
+        guard manualRefreshPending else { return }
+        manualRefreshPending = false
+        manualRefreshTimeout?.cancel()
+        manualRefreshTimeout = nil
+        onManualRefreshResult?(success)
+    }
 
     private let client = CodexAppServerClient()
     private var timer: Timer?
@@ -37,6 +63,7 @@ final class RateLimitStore {
     }
 
     func stop() {
+        finishManualRefresh(false)
         isStarted = false
         refreshInFlight = false
         tokenUsageInFlight = false
@@ -138,6 +165,7 @@ final class RateLimitStore {
     }
 
     private func handleFailure(_ error: Error) {
+        finishManualRefresh(false)
         guard isStarted else {
             return
         }
@@ -221,11 +249,13 @@ final class RateLimitStore {
             }
 
             guard case .success(let response) = result else {
+                self.finishManualRefresh(false)
                 return
             }
 
             self.state.tokenUsage = TokenUsageSummary(response: response)
             self.publish()
+            self.finishManualRefresh(true)
         }
     }
 }

@@ -1,15 +1,27 @@
 import AppKit
+import QuartzCore
 
 final class TouchBarRateLimitsView: NSView {
-    private let codexIconView = NSImageView()
+    var onRefresh: (() -> Void)?
+
+    private let codexIconButton = NSButton()
+    private let refreshBadgeView = NSImageView()
     private let resetCreditIconView = NSImageView()
-    private let resetCreditCountLabel = NSTextField(labelWithString: "重置券 ×--")
+    private let resetCreditCountLabel = NSTextField(labelWithString: "重置卡 ×--")
+    private let pageDots = NSStackView()
+    private let cardPageDot = NSView()
+    private let heatmapPageDot = NSView()
     private let resetCreditExpirationLabel = NSTextField(labelWithString: "--")
     private let resetCreditDetails = NSStackView()
     private let resetCreditCard = NSStackView()
     private let fiveHourRow = TouchBarLimitRow(title: "5 小时")
     private let weeklyRow = TouchBarLimitRow(title: "周限额")
     private let rows = NSStackView()
+    private let heatmapView = UsageHeatmapView()
+    private let heatmapToggleButton = NSButton()
+    private var preferredHeatmap = UserDefaults.standard.bool(forKey: "showUsageHeatmap")
+    private var showingHeatmap = false
+    private var hasResetCredits = false
 
     init() {
         super.init(frame: .zero)
@@ -21,7 +33,12 @@ final class TouchBarRateLimitsView: NSView {
     }
 
     func update(with state: RateLimitDisplayState) {
+        heatmapView.buckets = state.tokenUsage?.dailyUsageBuckets ?? []
+        heatmapToggleButton.isEnabled = !heatmapView.buckets.isEmpty
         updateResetCreditCard(state.resetCredits)
+        setHeatmapVisible(
+            !heatmapView.buckets.isEmpty && (!hasResetCredits || preferredHeatmap)
+        )
 
         if let fiveHour = state.fiveHour {
             fiveHourRow.isHidden = false
@@ -58,13 +75,15 @@ final class TouchBarRateLimitsView: NSView {
 
     private func updateResetCreditCard(_ resetCredits: ResetCreditSummary?) {
         guard let resetCredits, resetCredits.availableCount > 0 else {
+            hasResetCredits = false
             resetCreditCard.isHidden = true
             return
         }
 
-        resetCreditCountLabel.stringValue = "重置券 ×\(resetCredits.availableCount)"
+        hasResetCredits = true
+        resetCreditCountLabel.stringValue = "重置卡 ×\(resetCredits.availableCount)"
         resetCreditExpirationLabel.stringValue = resetCredits.expirationText
-        resetCreditCard.toolTip = "重置券，\(resetCredits.expirationText)"
+        resetCreditCard.toolTip = "重置卡，\(resetCredits.expirationText)；点击切换半年用量图"
         let color: NSColor = resetCredits.isExpiringSoon
             ? .systemRed
             : NSColor(calibratedRed: 0.16, green: 0.86, blue: 1.0, alpha: 1.0)
@@ -73,21 +92,45 @@ final class TouchBarRateLimitsView: NSView {
         resetCreditExpirationLabel.textColor = resetCredits.isExpiringSoon
             ? NSColor.systemRed.withAlphaComponent(0.92)
             : NSColor(calibratedRed: 0.65, green: 0.80, blue: 0.9, alpha: 0.82)
-        resetCreditCard.isHidden = false
+        resetCreditCard.isHidden = showingHeatmap
     }
 
     private func configure() {
         translatesAutoresizingMaskIntoConstraints = false
 
-        codexIconView.image = Self.codexIcon()
-        codexIconView.imageAlignment = .alignCenter
-        codexIconView.imageScaling = .scaleProportionallyUpOrDown
-        codexIconView.translatesAutoresizingMaskIntoConstraints = false
-        codexIconView.toolTip = "Codex"
+        codexIconButton.image = Self.codexIcon()
+        codexIconButton.imagePosition = .imageOnly
+        codexIconButton.imageScaling = .scaleProportionallyUpOrDown
+        codexIconButton.isBordered = false
+        codexIconButton.focusRingType = .none
+        codexIconButton.target = self
+        codexIconButton.action = #selector(refreshTapped)
+        codexIconButton.translatesAutoresizingMaskIntoConstraints = false
+        codexIconButton.toolTip = "立即刷新"
+        codexIconButton.setAccessibilityLabel("立即刷新 Codex 用量")
+
+        let refreshColor = NSColor(calibratedRed: 0.16, green: 0.86, blue: 1.0, alpha: 1.0)
+        if let symbol = NSImage(
+            systemSymbolName: "arrow.clockwise",
+            accessibilityDescription: "刷新"
+        )?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 10, weight: .bold)) {
+            let image = NSImage(size: symbol.size)
+            image.lockFocus()
+            symbol.draw(at: .zero, from: .zero, operation: .sourceOver, fraction: 1)
+            refreshColor.setFill()
+            NSRect(origin: .zero, size: symbol.size).fill(using: .sourceIn)
+            image.unlockFocus()
+            image.isTemplate = false
+            refreshBadgeView.image = image
+        }
+        refreshBadgeView.imageScaling = .scaleProportionallyUpOrDown
+        refreshBadgeView.translatesAutoresizingMaskIntoConstraints = false
+        refreshBadgeView.wantsLayer = true
+        codexIconButton.addSubview(refreshBadgeView)
 
         resetCreditIconView.image = NSImage(
             systemSymbolName: "arrow.triangle.2.circlepath",
-            accessibilityDescription: "重置券"
+            accessibilityDescription: "重置卡"
         )
         resetCreditIconView.contentTintColor = NSColor(calibratedRed: 0.16, green: 0.86, blue: 1.0, alpha: 1.0)
         resetCreditIconView.imageScaling = .scaleProportionallyUpOrDown
@@ -120,21 +163,54 @@ final class TouchBarRateLimitsView: NSView {
         rows.alignment = .leading
         rows.spacing = 0
 
-        let content = NSStackView(views: [codexIconView, rows, resetCreditCard])
+        let content = NSStackView(views: [codexIconButton, rows, resetCreditCard])
         content.translatesAutoresizingMaskIntoConstraints = false
         content.orientation = .horizontal
         content.alignment = .centerY
         content.spacing = 6
-        content.setCustomSpacing(2, after: codexIconView)
+        content.setCustomSpacing(2, after: codexIconButton)
         content.setCustomSpacing(8, after: rows)
 
         addSubview(content)
 
+        heatmapView.translatesAutoresizingMaskIntoConstraints = false
+        heatmapView.isHidden = true
+        addSubview(heatmapView)
+
+        pageDots.translatesAutoresizingMaskIntoConstraints = false
+        pageDots.orientation = .vertical
+        pageDots.spacing = 2
+        for dot in [cardPageDot, heatmapPageDot] {
+            dot.wantsLayer = true
+            dot.layer?.cornerRadius = 1.5
+            dot.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                dot.widthAnchor.constraint(equalToConstant: 3),
+                dot.heightAnchor.constraint(equalToConstant: 3)
+            ])
+            pageDots.addArrangedSubview(dot)
+        }
+        addSubview(pageDots)
+
+        heatmapToggleButton.title = ""
+        heatmapToggleButton.isBordered = false
+        heatmapToggleButton.isTransparent = true
+        heatmapToggleButton.focusRingType = .none
+        heatmapToggleButton.target = self
+        heatmapToggleButton.action = #selector(toggleHeatmap)
+        heatmapToggleButton.translatesAutoresizingMaskIntoConstraints = false
+        heatmapToggleButton.setAccessibilityLabel("切换半年用量图")
+        addSubview(heatmapToggleButton)
+
         NSLayoutConstraint.activate([
             widthAnchor.constraint(equalToConstant: 606),
             heightAnchor.constraint(equalToConstant: 30),
-            codexIconView.widthAnchor.constraint(equalToConstant: 34),
-            codexIconView.heightAnchor.constraint(equalToConstant: 30),
+            codexIconButton.widthAnchor.constraint(equalToConstant: 34),
+            codexIconButton.heightAnchor.constraint(equalToConstant: 30),
+            refreshBadgeView.widthAnchor.constraint(equalToConstant: 10),
+            refreshBadgeView.heightAnchor.constraint(equalToConstant: 10),
+            refreshBadgeView.trailingAnchor.constraint(equalTo: codexIconButton.trailingAnchor),
+            refreshBadgeView.bottomAnchor.constraint(equalTo: codexIconButton.bottomAnchor, constant: -1),
             fiveHourRow.widthAnchor.constraint(equalToConstant: 450),
             weeklyRow.widthAnchor.constraint(equalToConstant: 450),
             resetCreditCard.widthAnchor.constraint(equalToConstant: 112),
@@ -143,8 +219,87 @@ final class TouchBarRateLimitsView: NSView {
             resetCreditIconView.heightAnchor.constraint(equalToConstant: 14),
             content.leadingAnchor.constraint(equalTo: leadingAnchor),
             content.trailingAnchor.constraint(equalTo: trailingAnchor),
-            content.centerYAnchor.constraint(equalTo: centerYAnchor)
+            content.centerYAnchor.constraint(equalTo: centerYAnchor),
+            heatmapView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            heatmapView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            heatmapView.widthAnchor.constraint(equalToConstant: 112),
+            heatmapView.heightAnchor.constraint(equalToConstant: 30),
+            heatmapToggleButton.trailingAnchor.constraint(equalTo: trailingAnchor),
+            heatmapToggleButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            heatmapToggleButton.widthAnchor.constraint(equalToConstant: 112),
+            heatmapToggleButton.heightAnchor.constraint(equalToConstant: 30),
+            pageDots.trailingAnchor.constraint(equalTo: trailingAnchor),
+            pageDots.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -1)
         ])
+    }
+
+    @objc private func refreshTapped() {
+        guard codexIconButton.isEnabled else { return }
+        codexIconButton.isEnabled = false
+        layoutSubtreeIfNeeded()
+        if let layer = refreshBadgeView.layer {
+            let frame = layer.frame
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            layer.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+            layer.position = CGPoint(x: frame.midX, y: frame.midY)
+            CATransaction.commit()
+        }
+        let animation = CABasicAnimation(keyPath: "transform.rotation.z")
+        animation.fromValue = 0
+        animation.toValue = Double.pi * 2
+        animation.duration = 0.45
+        refreshBadgeView.layer?.add(animation, forKey: "refresh")
+        onRefresh?()
+    }
+
+    func showRefreshResult(_ success: Bool) {
+        refreshBadgeView.layer?.removeAnimation(forKey: "refresh")
+        let original = refreshBadgeView.image
+        if let symbol = NSImage(systemSymbolName: success ? "checkmark" : "exclamationmark", accessibilityDescription: success ? "刷新成功" : "刷新失败")?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 10, weight: .bold)) {
+            let image = NSImage(size: symbol.size)
+            image.lockFocus()
+            symbol.draw(at: .zero, from: .zero, operation: .sourceOver, fraction: 1)
+            (success ? NSColor(calibratedRed: 0.16, green: 0.86, blue: 1, alpha: 1) : NSColor.systemRed).setFill()
+            NSRect(origin: .zero, size: symbol.size).fill(using: .sourceIn)
+            image.unlockFocus()
+            image.isTemplate = false
+            refreshBadgeView.image = image
+        }
+        codexIconButton.setAccessibilityLabel(success ? "刷新成功" : "刷新失败")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+            guard let self else { return }
+            self.refreshBadgeView.image = original
+            self.codexIconButton.isEnabled = true
+            self.codexIconButton.setAccessibilityLabel("立即刷新 Codex 用量")
+        }
+    }
+
+    @objc private func toggleHeatmap() {
+        guard !heatmapView.buckets.isEmpty else {
+            return
+        }
+
+        preferredHeatmap = !showingHeatmap
+        UserDefaults.standard.set(preferredHeatmap, forKey: "showUsageHeatmap")
+        setHeatmapVisible(preferredHeatmap)
+    }
+
+    private func setHeatmapVisible(_ visible: Bool) {
+        showingHeatmap = visible
+        heatmapView.isHidden = !showingHeatmap
+        resetCreditCard.isHidden = showingHeatmap || !hasResetCredits
+        pageDots.isHidden = !hasResetCredits
+        heatmapToggleButton.isHidden = pageDots.isHidden
+        let active = NSColor(calibratedRed: 1.0, green: 0.68, blue: 0.16, alpha: 1).cgColor
+        let inactive = NSColor(calibratedWhite: 0.25, alpha: 1).cgColor
+        cardPageDot.layer?.backgroundColor = showingHeatmap ? inactive : active
+        heatmapPageDot.layer?.backgroundColor = showingHeatmap ? active : inactive
+        heatmapToggleButton.toolTip = showingHeatmap ? "点击返回重置卡" : "点击切换半年用量图"
+        heatmapToggleButton.setAccessibilityLabel(
+            showingHeatmap ? "返回重置卡" : "切换半年用量图"
+        )
     }
 
     private static func codexIcon() -> NSImage {
@@ -215,6 +370,10 @@ private final class TouchBarLimitRow: NSView {
         usageLabel.stringValue = usageText
     }
 
+    func setUsageHidden(_ hidden: Bool) {
+        usageLabel.isHidden = hidden
+    }
+
     private func configure() {
         translatesAutoresizingMaskIntoConstraints = false
 
@@ -282,4 +441,99 @@ private final class TouchBarLimitRow: NSView {
             row.bottomAnchor.constraint(equalTo: bottomAnchor)
         ])
     }
+}
+
+
+private final class UsageHeatmapView: NSView {
+    var buckets: [DailyUsageBucket] = [] {
+        didSet { needsDisplay = true }
+    }
+
+    override var isFlipped: Bool { true }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+
+        guard let latestKey = buckets.map(\.startDate).max(),
+              let latestDate = Self.dateFormatter.date(from: latestKey) else {
+            return
+        }
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        calendar.firstWeekday = 2
+
+        let weekdayOffset = (calendar.component(.weekday, from: latestDate) + 5) % 7
+        guard let latestWeekStart = calendar.date(byAdding: .day, value: -weekdayOffset, to: latestDate),
+              let firstWeekStart = calendar.date(byAdding: .day, value: -25 * 7, to: latestWeekStart) else {
+            return
+        }
+
+        let totals = Dictionary(grouping: buckets, by: \.startDate)
+            .mapValues { $0.reduce(0) { $0 + $1.tokens } }
+        let cellSize = NSSize(width: 3, height: 3)
+        let gap = NSSize(width: 1, height: 1)
+        let gridWidth = 26 * cellSize.width + 25 * gap.width
+        let gridHeight = 7 * cellSize.height + 6 * gap.height
+        let origin = NSPoint(
+            x: floor((bounds.width - gridWidth) / 2),
+            y: (bounds.height - gridHeight) / 2
+        )
+
+
+        for week in 0..<26 {
+            for day in 0..<7 {
+                guard let date = calendar.date(
+                    byAdding: .day,
+                    value: week * 7 + day,
+                    to: firstWeekStart
+                ) else {
+                    continue
+                }
+
+                let key = Self.dateFormatter.string(from: date)
+                let rect = NSRect(
+                    x: origin.x + CGFloat(week) * (cellSize.width + gap.width),
+                    y: origin.y + CGFloat(day) * (cellSize.height + gap.height),
+                    width: cellSize.width,
+                    height: cellSize.height
+                )
+                color(for: totals[key] ?? 0).setFill()
+                NSBezierPath(roundedRect: rect, xRadius: 1, yRadius: 1).fill()
+            }
+        }
+    }
+
+    private func color(for tokens: Int) -> NSColor {
+        let brightness: CGFloat
+        switch tokens {
+        case ...0:
+            return NSColor(calibratedWhite: 0.12, alpha: 1)
+        case ..<25_000_000:
+            brightness = 0.30
+        case ..<50_000_000:
+            brightness = 0.45
+        case ..<75_000_000:
+            brightness = 0.60
+        case ..<100_000_000:
+            brightness = 0.78
+        default:
+            brightness = 1.0
+        }
+        return NSColor(
+            calibratedRed: 0.16 * brightness,
+            green: 0.86 * brightness,
+            blue: brightness,
+            alpha: 1
+        )
+    }
+
+    private static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
 }

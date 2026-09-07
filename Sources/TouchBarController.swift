@@ -14,6 +14,15 @@ final class TouchBarController: NSObject, NSTouchBarDelegate {
         presentedTouchBar != nil
     }
 
+    var onRefresh: (() -> Void)? {
+        get { touchBarView.onRefresh }
+        set { touchBarView.onRefresh = newValue }
+    }
+
+    func showRefreshResult(_ success: Bool) {
+        touchBarView.showRefreshResult(success)
+    }
+
     func makeQuotaTouchBar() -> NSTouchBar {
         let touchBar = NSTouchBar()
         touchBar.customizationIdentifier = TouchBarIdentifiers.touchBar

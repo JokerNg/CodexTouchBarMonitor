@@ -15,7 +15,7 @@ struct AccountUsageSummary: Codable {
     let lifetimeTokens: Int?
 }
 
-struct DailyUsageBucket: Codable {
+struct DailyUsageBucket: Codable, Equatable {
     let startDate: String
     let tokens: Int
 }
@@ -148,9 +148,12 @@ struct ResetCreditSummary: Equatable {
 struct TokenUsageSummary: Equatable {
     let yesterdayTokens: Int?
     let cumulativeTokens: Int?
+    let dailyUsageBuckets: [DailyUsageBucket]
 
     init(response: GetAccountUsageResponse, calendar: Calendar = .current, now: Date = Date()) {
-        if let dailyUsageBuckets = response.dailyUsageBuckets,
+        dailyUsageBuckets = response.dailyUsageBuckets ?? []
+
+        if !dailyUsageBuckets.isEmpty,
            let yesterday = calendar.date(
                byAdding: .day,
                value: -1,

@@ -16,6 +16,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, RateLimitStoreDelegate
         CodexAutoLauncher.clearManualQuitLock()
 
         store.delegate = self
+        touchBarController.onRefresh = { [weak self] in
+            self?.store.refreshManually()
+        }
+        store.onManualRefreshResult = { [weak self] success in
+            self?.touchBarController.showRefreshResult(success)
+        }
         configureStatusItem()
         configureLifecycleMonitor()
         lifecycleMonitor.start()
