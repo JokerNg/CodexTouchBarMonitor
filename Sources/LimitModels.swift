@@ -55,14 +55,7 @@ struct LimitMeter: Equatable {
         guard let resetDate else {
             return "--"
         }
-
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.timeZone = .current
-
-        formatter.dateFormat = "MM月dd日 HH:mm"
-
-        return formatter.string(from: resetDate)
+        return L10n.dateTime(resetDate)
     }
 
     init(window: RateLimitWindow) {
@@ -122,12 +115,7 @@ struct ResetCreditSummary: Equatable {
         guard let earliestExpirationDate else {
             return "--"
         }
-
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.timeZone = .current
-        formatter.dateFormat = "MM月dd日 HH:mm"
-        return formatter.string(from: earliestExpirationDate)
+        return L10n.dateTime(earliestExpirationDate)
     }
 
     init(response: RateLimitResetCreditsResponse) {
@@ -176,36 +164,10 @@ struct TokenUsageSummary: Equatable {
     }
 
     var yesterdayText: String {
-        guard let yesterdayTokens else {
-            return "昨--"
-        }
-        return "昨\(Self.formatAsWan(yesterdayTokens))"
+        L10n.yesterdayText(yesterdayTokens)
     }
 
     var cumulativeText: String {
-        guard let cumulativeTokens else {
-            return "总--"
-        }
-        return "总\(Self.formatAsYi(cumulativeTokens))"
-    }
-
-    private static func formatAsWan(_ tokens: Int) -> String {
-        let value = Double(tokens) / 10_000
-        return "\(formatted(value))万"
-    }
-
-    private static func formatAsYi(_ tokens: Int) -> String {
-        let value = Double(tokens) / 100_000_000
-        return "\(formatted(value))亿"
-    }
-
-    private static func formatted(_ value: Double) -> String {
-        if value >= 100 {
-            return String(format: "%.0f", value)
-        }
-        if value >= 10 {
-            return String(format: "%.1f", value)
-        }
-        return String(format: "%.2f", value)
+        L10n.cumulativeText(cumulativeTokens)
     }
 }

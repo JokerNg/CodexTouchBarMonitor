@@ -23,6 +23,10 @@ final class TouchBarController: NSObject, NSTouchBarDelegate {
         touchBarView.showRefreshResult(success)
     }
 
+    func applyLanguage() {
+        touchBarView.update(with: currentState)
+    }
+
     func makeQuotaTouchBar() -> NSTouchBar {
         let touchBar = NSTouchBar()
         touchBar.customizationIdentifier = TouchBarIdentifiers.touchBar

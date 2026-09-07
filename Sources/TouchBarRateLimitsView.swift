@@ -7,16 +7,18 @@ final class TouchBarRateLimitsView: NSView {
     private let codexIconButton = NSButton()
     private let refreshBadgeView = NSImageView()
     private let resetCreditIconView = NSImageView()
-    private let resetCreditCountLabel = NSTextField(labelWithString: "重置卡 ×--")
+    private let resetCreditCountLabel = NSTextField(labelWithString: "--")
     private let pageDots = NSStackView()
     private let cardPageDot = NSView()
     private let heatmapPageDot = NSView()
     private let resetCreditExpirationLabel = NSTextField(labelWithString: "--")
     private let resetCreditDetails = NSStackView()
     private let resetCreditCard = NSStackView()
-    private let fiveHourRow = TouchBarLimitRow(title: "5 小时")
-    private let weeklyRow = TouchBarLimitRow(title: "周限额")
+    private let fiveHourRow = TouchBarLimitRow(title: L10n.fiveHour)
+    private let weeklyRow = TouchBarLimitRow(title: L10n.weeklyLimit)
+    private let proRow = ProLimitRow()
     private let rows = NSStackView()
+    private let contentStack = NSStackView()
     private let heatmapView = UsageHeatmapView()
     private let heatmapToggleButton = NSButton()
     private var preferredHeatmap = UserDefaults.standard.bool(forKey: "showUsageHeatmap")
@@ -40,36 +42,51 @@ final class TouchBarRateLimitsView: NSView {
             !heatmapView.buckets.isEmpty && (!hasResetCredits || preferredHeatmap)
         )
 
+        let proOnly = state.fiveHour == nil && state.weekly != nil
+        contentStack.setCustomSpacing(proOnly ? 8 : 2, after: codexIconButton)
+        contentStack.setCustomSpacing(proOnly ? 2 : 8, after: rows)
+        proRow.isHidden = !proOnly
+        if proOnly, let weekly = state.weekly {
+            fiveHourRow.isHidden = true
+            weeklyRow.isHidden = true
+            proRow.update(
+                meter: weekly,
+                yesterdayText: state.tokenUsage?.yesterdayText ?? L10n.yesterdayText(nil),
+                cumulativeText: state.tokenUsage?.cumulativeText ?? L10n.cumulativeText(nil)
+            )
+            return
+        }
+
         if let fiveHour = state.fiveHour {
             fiveHourRow.isHidden = false
             fiveHourRow.updateLimit(
-                title: "5 小时",
+                title: L10n.fiveHour,
                 meter: fiveHour,
-                usageText: state.tokenUsage?.yesterdayText ?? "昨--"
+                usageText: state.tokenUsage?.yesterdayText ?? L10n.yesterdayText(nil)
             )
         } else if state.lastUpdated != nil {
             fiveHourRow.isHidden = true
         } else {
             fiveHourRow.isHidden = false
             fiveHourRow.updatePlaceholder(
-                title: "5 小时",
-                usageText: "昨--",
-                statusText: state.connectionState == .failed ? "连接失败" : "连接中…"
+                title: L10n.fiveHour,
+                usageText: L10n.yesterdayText(nil),
+                statusText: state.connectionState == .failed ? L10n.connectionFailed : L10n.connecting
             )
         }
 
         if let weekly = state.weekly {
             weeklyRow.isHidden = false
             weeklyRow.updateLimit(
-                title: "周限额",
+                title: L10n.weeklyLimit,
                 meter: weekly,
-                usageText: state.tokenUsage?.cumulativeText ?? "总--"
+                usageText: state.tokenUsage?.cumulativeText ?? L10n.cumulativeText(nil)
             )
         } else if state.lastUpdated != nil {
             weeklyRow.isHidden = true
         } else {
             weeklyRow.isHidden = false
-            weeklyRow.updatePlaceholder(title: "周限额", usageText: "总--")
+            weeklyRow.updatePlaceholder(title: L10n.weeklyLimit, usageText: L10n.cumulativeText(nil))
         }
     }
 
@@ -81,9 +98,9 @@ final class TouchBarRateLimitsView: NSView {
         }
 
         hasResetCredits = true
-        resetCreditCountLabel.stringValue = "重置卡 ×\(resetCredits.availableCount)"
+        resetCreditCountLabel.stringValue = L10n.resetCard(resetCredits.availableCount)
         resetCreditExpirationLabel.stringValue = resetCredits.expirationText
-        resetCreditCard.toolTip = "重置卡，\(resetCredits.expirationText)；点击切换半年用量图"
+        resetCreditCard.toolTip = L10n.resetCardTooltip(resetCredits.expirationText)
         let color: NSColor = resetCredits.isExpiringSoon
             ? .systemRed
             : NSColor(calibratedRed: 0.16, green: 0.86, blue: 1.0, alpha: 1.0)
@@ -106,13 +123,13 @@ final class TouchBarRateLimitsView: NSView {
         codexIconButton.target = self
         codexIconButton.action = #selector(refreshTapped)
         codexIconButton.translatesAutoresizingMaskIntoConstraints = false
-        codexIconButton.toolTip = "立即刷新"
-        codexIconButton.setAccessibilityLabel("立即刷新 Codex 用量")
+        codexIconButton.toolTip = L10n.refreshNow
+        codexIconButton.setAccessibilityLabel(L10n.refreshAccessibility)
 
         let refreshColor = NSColor(calibratedRed: 0.16, green: 0.86, blue: 1.0, alpha: 1.0)
         if let symbol = NSImage(
             systemSymbolName: "arrow.clockwise",
-            accessibilityDescription: "刷新"
+            accessibilityDescription: L10n.refreshNow
         )?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 10, weight: .bold)) {
             let image = NSImage(size: symbol.size)
             image.lockFocus()
@@ -130,7 +147,7 @@ final class TouchBarRateLimitsView: NSView {
 
         resetCreditIconView.image = NSImage(
             systemSymbolName: "arrow.triangle.2.circlepath",
-            accessibilityDescription: "重置卡"
+            accessibilityDescription: L10n.resetCard
         )
         resetCreditIconView.contentTintColor = NSColor(calibratedRed: 0.16, green: 0.86, blue: 1.0, alpha: 1.0)
         resetCreditIconView.imageScaling = .scaleProportionallyUpOrDown
@@ -157,21 +174,21 @@ final class TouchBarRateLimitsView: NSView {
         resetCreditCard.spacing = 4
         resetCreditCard.isHidden = true
 
-        rows.setViews([fiveHourRow, weeklyRow], in: .leading)
+        rows.setViews([fiveHourRow, weeklyRow, proRow], in: .leading)
         rows.translatesAutoresizingMaskIntoConstraints = false
         rows.orientation = .vertical
         rows.alignment = .leading
         rows.spacing = 0
 
-        let content = NSStackView(views: [codexIconButton, rows, resetCreditCard])
-        content.translatesAutoresizingMaskIntoConstraints = false
-        content.orientation = .horizontal
-        content.alignment = .centerY
-        content.spacing = 6
-        content.setCustomSpacing(2, after: codexIconButton)
-        content.setCustomSpacing(8, after: rows)
+        contentStack.setViews([codexIconButton, rows, resetCreditCard], in: .leading)
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.orientation = .horizontal
+        contentStack.alignment = .centerY
+        contentStack.spacing = 6
+        contentStack.setCustomSpacing(2, after: codexIconButton)
+        contentStack.setCustomSpacing(8, after: rows)
 
-        addSubview(content)
+        addSubview(contentStack)
 
         heatmapView.translatesAutoresizingMaskIntoConstraints = false
         heatmapView.isHidden = true
@@ -199,7 +216,7 @@ final class TouchBarRateLimitsView: NSView {
         heatmapToggleButton.target = self
         heatmapToggleButton.action = #selector(toggleHeatmap)
         heatmapToggleButton.translatesAutoresizingMaskIntoConstraints = false
-        heatmapToggleButton.setAccessibilityLabel("切换半年用量图")
+        heatmapToggleButton.setAccessibilityLabel(L10n.switchHeatmap)
         addSubview(heatmapToggleButton)
 
         NSLayoutConstraint.activate([
@@ -213,13 +230,14 @@ final class TouchBarRateLimitsView: NSView {
             refreshBadgeView.bottomAnchor.constraint(equalTo: codexIconButton.bottomAnchor, constant: -1),
             fiveHourRow.widthAnchor.constraint(equalToConstant: 450),
             weeklyRow.widthAnchor.constraint(equalToConstant: 450),
+            proRow.widthAnchor.constraint(equalToConstant: 450),
             resetCreditCard.widthAnchor.constraint(equalToConstant: 112),
             resetCreditCard.heightAnchor.constraint(equalToConstant: 30),
             resetCreditIconView.widthAnchor.constraint(equalToConstant: 14),
             resetCreditIconView.heightAnchor.constraint(equalToConstant: 14),
-            content.leadingAnchor.constraint(equalTo: leadingAnchor),
-            content.trailingAnchor.constraint(equalTo: trailingAnchor),
-            content.centerYAnchor.constraint(equalTo: centerYAnchor),
+            contentStack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            contentStack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            contentStack.centerYAnchor.constraint(equalTo: centerYAnchor),
             heatmapView.trailingAnchor.constraint(equalTo: trailingAnchor),
             heatmapView.centerYAnchor.constraint(equalTo: centerYAnchor),
             heatmapView.widthAnchor.constraint(equalToConstant: 112),
@@ -256,7 +274,7 @@ final class TouchBarRateLimitsView: NSView {
     func showRefreshResult(_ success: Bool) {
         refreshBadgeView.layer?.removeAnimation(forKey: "refresh")
         let original = refreshBadgeView.image
-        if let symbol = NSImage(systemSymbolName: success ? "checkmark" : "exclamationmark", accessibilityDescription: success ? "刷新成功" : "刷新失败")?
+        if let symbol = NSImage(systemSymbolName: success ? "checkmark" : "exclamationmark", accessibilityDescription: success ? L10n.refreshSuccess : L10n.refreshFailure)?
             .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 10, weight: .bold)) {
             let image = NSImage(size: symbol.size)
             image.lockFocus()
@@ -267,12 +285,12 @@ final class TouchBarRateLimitsView: NSView {
             image.isTemplate = false
             refreshBadgeView.image = image
         }
-        codexIconButton.setAccessibilityLabel(success ? "刷新成功" : "刷新失败")
+        codexIconButton.setAccessibilityLabel(success ? L10n.refreshSuccess : L10n.refreshFailure)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
             guard let self else { return }
             self.refreshBadgeView.image = original
             self.codexIconButton.isEnabled = true
-            self.codexIconButton.setAccessibilityLabel("立即刷新 Codex 用量")
+            self.codexIconButton.setAccessibilityLabel(L10n.refreshAccessibility)
         }
     }
 
@@ -296,9 +314,9 @@ final class TouchBarRateLimitsView: NSView {
         let inactive = NSColor(calibratedWhite: 0.25, alpha: 1).cgColor
         cardPageDot.layer?.backgroundColor = showingHeatmap ? inactive : active
         heatmapPageDot.layer?.backgroundColor = showingHeatmap ? active : inactive
-        heatmapToggleButton.toolTip = showingHeatmap ? "点击返回重置卡" : "点击切换半年用量图"
+        heatmapToggleButton.toolTip = showingHeatmap ? L10n.returnToResetCards : L10n.switchHeatmap
         heatmapToggleButton.setAccessibilityLabel(
-            showingHeatmap ? "返回重置卡" : "切换半年用量图"
+            showingHeatmap ? L10n.returnToResetCards : L10n.switchHeatmap
         )
     }
 
@@ -335,7 +353,7 @@ final class TouchBarRateLimitsView: NSView {
 private final class TouchBarLimitRow: NSView {
     private let titleLabel: NSTextField
     private let batteryBar = SegmentedBatteryBar()
-    private let remainingLabel = NSTextField(labelWithString: "剩余 --")
+    private let remainingLabel = NSTextField(labelWithString: L10n.remaining("--"))
     private let resetLabel = NSTextField(labelWithString: "--")
     private let separatorLabel = NSTextField(labelWithString: "|")
     private let usageLabel = NSTextField(labelWithString: "--")
@@ -355,7 +373,7 @@ private final class TouchBarLimitRow: NSView {
         batteryBar.isHidden = false
         batteryBar.remainingPercent = meter.remainingPercent
         batteryBar.isDimmed = false
-        remainingLabel.stringValue = "剩余 \(meter.remainingText)"
+        remainingLabel.stringValue = L10n.remaining(meter.remainingText)
         resetLabel.stringValue = meter.resetText
         usageLabel.stringValue = usageText
     }
@@ -365,7 +383,7 @@ private final class TouchBarLimitRow: NSView {
         batteryBar.isHidden = false
         batteryBar.remainingPercent = 0
         batteryBar.isDimmed = true
-        remainingLabel.stringValue = "剩余 --"
+        remainingLabel.stringValue = L10n.remaining("--")
         resetLabel.stringValue = statusText
         usageLabel.stringValue = usageText
     }
@@ -432,13 +450,160 @@ private final class TouchBarLimitRow: NSView {
             batteryBar.leadingAnchor.constraint(equalTo: statusContainer.leadingAnchor),
             batteryBar.topAnchor.constraint(equalTo: statusContainer.topAnchor),
             remainingLabel.widthAnchor.constraint(equalToConstant: 66),
-            resetLabel.widthAnchor.constraint(equalToConstant: 110),
+            resetLabel.widthAnchor.constraint(equalToConstant: 100),
             separatorLabel.widthAnchor.constraint(equalToConstant: 7),
-            usageLabel.widthAnchor.constraint(equalToConstant: 68),
+            usageLabel.widthAnchor.constraint(equalToConstant: 78),
             row.leadingAnchor.constraint(equalTo: leadingAnchor),
             row.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
             row.topAnchor.constraint(equalTo: topAnchor),
             row.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+    }
+}
+
+private final class ProLimitRow: NSView {
+    private let badgeContainer = NSView()
+    private let badgeLabel = NSTextField(labelWithString: "PRO")
+    private let titleLabel = NSTextField(labelWithString: L10n.weeklyLimit)
+    private let remainingLabel = NSTextField(labelWithString: "--")
+    private let resetLabel = NSTextField(labelWithString: "--")
+    private let batteryBar = SegmentedBatteryBar()
+    private let yesterdayLabel = NSTextField(labelWithString: "--")
+    private let yesterdaySeparatorLabel = NSTextField(labelWithString: "|")
+    private let separatorLabel = NSTextField(labelWithString: "|")
+    private let cumulativeLabel = NSTextField(labelWithString: "--")
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        configure()
+    }
+
+    convenience init() {
+        self.init(frame: .zero)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func update(meter: LimitMeter, yesterdayText: String, cumulativeText: String) {
+        titleLabel.stringValue = L10n.weeklyLimit
+        remainingLabel.stringValue = L10n.remaining(meter.remainingText)
+        resetLabel.stringValue = meter.resetText
+        batteryBar.remainingPercent = meter.remainingPercent
+        batteryBar.isDimmed = false
+        yesterdayLabel.stringValue = yesterdayText
+        cumulativeLabel.stringValue = cumulativeText
+    }
+
+    private func configure() {
+        translatesAutoresizingMaskIntoConstraints = false
+
+        badgeLabel.font = .monospacedDigitSystemFont(ofSize: 9, weight: .bold)
+        badgeLabel.alignment = .center
+        badgeLabel.textColor = NSColor(calibratedRed: 0.02, green: 0.12, blue: 0.16, alpha: 1)
+        badgeLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        badgeContainer.translatesAutoresizingMaskIntoConstraints = false
+        badgeContainer.wantsLayer = true
+        badgeContainer.layer?.backgroundColor = NSColor.systemOrange.cgColor
+        badgeContainer.layer?.cornerRadius = 6.5
+        badgeContainer.addSubview(badgeLabel)
+
+        titleLabel.font = .monospacedDigitSystemFont(ofSize: 12.5, weight: .bold)
+        titleLabel.textColor = NSColor(calibratedRed: 0.78, green: 0.92, blue: 1.0, alpha: 1.0)
+
+        remainingLabel.font = .monospacedDigitSystemFont(ofSize: 12.5, weight: .semibold)
+        remainingLabel.textColor = NSColor(calibratedWhite: 0.96, alpha: 1.0)
+        remainingLabel.alignment = .right
+        remainingLabel.lineBreakMode = .byTruncatingTail
+
+        resetLabel.font = .monospacedDigitSystemFont(ofSize: 12.5, weight: .semibold)
+        resetLabel.textColor = NSColor(calibratedRed: 0.74, green: 0.86, blue: 0.94, alpha: 0.92)
+        resetLabel.alignment = .right
+        resetLabel.lineBreakMode = .byTruncatingTail
+
+        batteryBar.translatesAutoresizingMaskIntoConstraints = false
+        batteryBar.isDimmed = true
+
+        for label in [yesterdayLabel, cumulativeLabel] {
+            label.font = .monospacedDigitSystemFont(ofSize: 12.5, weight: .semibold)
+            label.textColor = NSColor(calibratedRed: 0.65, green: 0.80, blue: 0.9, alpha: 0.82)
+            label.lineBreakMode = .byTruncatingTail
+        }
+        for separator in [yesterdaySeparatorLabel, separatorLabel] {
+            separator.font = .monospacedDigitSystemFont(ofSize: 12.5, weight: .semibold)
+            separator.textColor = NSColor(calibratedRed: 0.16, green: 0.86, blue: 1.0, alpha: 0.66)
+            separator.alignment = .center
+        }
+
+        let header = NSView()
+        let details = NSView()
+        for subview in [badgeContainer, titleLabel, remainingLabel, resetLabel, batteryBar, yesterdayLabel, yesterdaySeparatorLabel, separatorLabel, cumulativeLabel] {
+            subview.translatesAutoresizingMaskIntoConstraints = false
+        }
+        header.translatesAutoresizingMaskIntoConstraints = false
+        details.translatesAutoresizingMaskIntoConstraints = false
+        header.addSubview(badgeContainer)
+        header.addSubview(titleLabel)
+        header.addSubview(remainingLabel)
+        header.addSubview(resetLabel)
+        header.addSubview(yesterdaySeparatorLabel)
+        header.addSubview(yesterdayLabel)
+        details.addSubview(batteryBar)
+        details.addSubview(separatorLabel)
+        details.addSubview(cumulativeLabel)
+
+        let content = NSStackView(views: [header, details])
+        content.translatesAutoresizingMaskIntoConstraints = false
+        content.orientation = .vertical
+        content.alignment = .leading
+        content.spacing = 1
+
+        addSubview(content)
+
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: 30),
+            header.widthAnchor.constraint(equalToConstant: 450),
+            header.heightAnchor.constraint(equalToConstant: 14),
+            badgeContainer.leadingAnchor.constraint(equalTo: header.leadingAnchor),
+            badgeContainer.widthAnchor.constraint(equalToConstant: 32),
+            badgeContainer.heightAnchor.constraint(equalToConstant: 13),
+            badgeLabel.leadingAnchor.constraint(equalTo: badgeContainer.leadingAnchor),
+            badgeLabel.trailingAnchor.constraint(equalTo: badgeContainer.trailingAnchor),
+            badgeLabel.topAnchor.constraint(equalTo: badgeContainer.topAnchor),
+            badgeLabel.bottomAnchor.constraint(equalTo: badgeContainer.bottomAnchor),
+            badgeContainer.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            titleLabel.leadingAnchor.constraint(equalTo: badgeContainer.trailingAnchor, constant: 6),
+            titleLabel.widthAnchor.constraint(equalToConstant: 52),
+            titleLabel.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            remainingLabel.widthAnchor.constraint(equalToConstant: 70),
+            remainingLabel.trailingAnchor.constraint(equalTo: header.leadingAnchor, constant: 246),
+            remainingLabel.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            resetLabel.widthAnchor.constraint(equalToConstant: 108),
+            resetLabel.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 248),
+            resetLabel.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            details.widthAnchor.constraint(equalToConstant: 450),
+            details.heightAnchor.constraint(equalToConstant: 15),
+            batteryBar.leadingAnchor.constraint(equalTo: details.leadingAnchor),
+            batteryBar.widthAnchor.constraint(equalToConstant: 356),
+            batteryBar.heightAnchor.constraint(equalToConstant: 12),
+            batteryBar.centerYAnchor.constraint(equalTo: details.centerYAnchor),
+            yesterdaySeparatorLabel.widthAnchor.constraint(equalToConstant: 7),
+            yesterdaySeparatorLabel.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 360),
+            yesterdaySeparatorLabel.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            yesterdayLabel.widthAnchor.constraint(equalToConstant: 79),
+            yesterdayLabel.leadingAnchor.constraint(equalTo: yesterdaySeparatorLabel.trailingAnchor, constant: 4),
+            yesterdayLabel.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            separatorLabel.widthAnchor.constraint(equalToConstant: 7),
+            separatorLabel.leadingAnchor.constraint(equalTo: details.leadingAnchor, constant: 360),
+            separatorLabel.centerYAnchor.constraint(equalTo: details.centerYAnchor),
+            cumulativeLabel.widthAnchor.constraint(equalToConstant: 79),
+            cumulativeLabel.leadingAnchor.constraint(equalTo: separatorLabel.trailingAnchor, constant: 4),
+            cumulativeLabel.centerYAnchor.constraint(equalTo: details.centerYAnchor),
+            content.leadingAnchor.constraint(equalTo: leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: trailingAnchor),
+            content.centerYAnchor.constraint(equalTo: centerYAnchor)
         ])
     }
 }

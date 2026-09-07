@@ -21,9 +21,9 @@ final class SegmentedBatteryBar: NSView {
         super.draw(dirtyRect)
 
         let trackRect = NSRect(
-            x: bounds.minX + 1,
+            x: bounds.minX,
             y: bounds.midY - 2.5,
-            width: max(0, bounds.width - 2),
+            width: max(0, bounds.width),
             height: 5
         )
         let trackPath = NSBezierPath(

@@ -7,7 +7,7 @@ CodexTouchBarMonitor 是一个专注 Touch Bar 的 macOS 工具，通过本机 C
 ## 功能
 
 - 菜单栏仅保留控制图标，不显示额度。
-- Touch Bar 持续显示 5 小时额度、周额度、剩余百分比和重置时间。
+- Touch Bar 持续显示 5 小时额度、周额度、剩余百分比和重置时间；Pro 账户无 5 小时限制时仅显示周额度。
 - 显示 Codex 官方 Token 用量，包括昨日用量和账户累计用量。
 - 每 60 秒自动刷新，刷新失败时保留已有数据。
 - 点击 Codex 图标可立即刷新；刷新徽标旋转，成功显示青色勾，失败或超时显示红色感叹号。
@@ -16,6 +16,8 @@ CodexTouchBarMonitor 是一个专注 Touch Bar 的 macOS 工具，通过本机 C
 - 点击重置卡区域可切换半年（26 周）Token 用量热力图；热力图状态下点击同一区域可返回重置卡。
 - 热力图使用 0 档深灰和 5 档固定用量：1–2500 万、2500–5000 万、5000–7500 万、7500 万–1 亿、1 亿以上；格子为正方形。
 - 没有重置卡时，右侧自动只显示热力图；有重置卡时会记住上次的显示模式。
+- Pro 账户使用带 PRO 标识的周限额布局，用量条与重置时间右侧对齐，昨日和累计用量分两行显示。
+- 菜单支持“跟随系统 / 中文 / English”语言设置，选择后立即应用并持久保存。
 - 自动跟随 ChatGPT / Codex 启动和退出。
 - 支持从菜单隐藏 Touch Bar 或隐藏菜单栏图标。
 
@@ -72,6 +74,7 @@ Touch Bar 包括：
 - 重新加载 Touch Bar。
 - 开关“随 Codex 自动启动”。
 - 查看连接状态和最后更新时间。
+- 设置界面语言：跟随系统、中文或 English。
 - 隐藏菜单栏图标；重新打开 App 可恢复。
 - 退出应用。
 
@@ -92,7 +95,7 @@ open build/CodexTouchBarMonitor.app
 scripts/package-dmg.sh
 ```
 
-输出文件为 `dist/CodexTouchBarMonitor-0.1.14.dmg`。当前构建使用 ad-hoc 签名，首次打开时 macOS 可能提示无法验证开发者；可在 Finder 中右键 App，选择“打开”。
+输出文件为 `dist/CodexTouchBarMonitor-0.1.15.dmg`。当前构建使用 ad-hoc 签名，首次打开时 macOS 可能提示无法验证开发者；可在 Finder 中右键 App，选择“打开”。
 
 开发期直接运行：
 

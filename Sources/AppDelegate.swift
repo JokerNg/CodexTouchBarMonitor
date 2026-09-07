@@ -7,8 +7,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, RateLimitStoreDelegate
     private var touchBarVisibilityMenuItem: NSMenuItem?
     private var connectionStatusMenuItem: NSMenuItem?
     private var lastUpdatedMenuItem: NSMenuItem?
+    private var refreshDataMenuItem: NSMenuItem?
+    private var reloadTouchBarMenuItem: NSMenuItem?
     private var autoLaunchMenuItem: NSMenuItem?
+    private var hideStatusItemMenuItem: NSMenuItem?
+    private var quitMenuItem: NSMenuItem?
+    private var languageMenuItem: NSMenuItem?
+    private var languageSubmenuItems: [AppLanguage: NSMenuItem] = [:]
     private let touchBarController = TouchBarController()
+    private var latestState = RateLimitDisplayState.initial
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -43,6 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, RateLimitStoreDelegate
     }
 
     func rateLimitStore(_ store: RateLimitStore, didUpdate state: RateLimitDisplayState) {
+        latestState = state
         touchBarController.update(with: state)
         updateRateLimitStatusMenu(with: state)
     }
@@ -58,19 +66,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, RateLimitStoreDelegate
         )
         button.imagePosition = .imageOnly
         button.title = ""
-        button.toolTip = "CodexTouchBarMonitor"
+        button.toolTip = L10n.appName
         statusItem.menu = makeStatusMenu()
     }
 
     private func makeStatusMenu() -> NSMenu {
         let menu = NSMenu()
 
-        let connectionStatusItem = NSMenuItem(title: "状态：未连接", action: nil, keyEquivalent: "")
+        let connectionStatusItem = NSMenuItem(title: L10n.connectionStatus(.idle, hasData: false), action: nil, keyEquivalent: "")
         connectionStatusItem.isEnabled = false
         menu.addItem(connectionStatusItem)
         connectionStatusMenuItem = connectionStatusItem
 
-        let lastUpdatedItem = NSMenuItem(title: "更新于：--", action: nil, keyEquivalent: "")
+        let lastUpdatedItem = NSMenuItem(title: L10n.updated(nil), action: nil, keyEquivalent: "")
         lastUpdatedItem.isEnabled = false
         menu.addItem(lastUpdatedItem)
         lastUpdatedMenuItem = lastUpdatedItem
@@ -78,7 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, RateLimitStoreDelegate
         menu.addItem(.separator())
 
         let visibilityItem = NSMenuItem(
-            title: "隐藏 Touch Bar",
+            title: L10n.hideTouchBar,
             action: #selector(toggleTouchBar(_:)),
             keyEquivalent: ""
         )
@@ -87,23 +95,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, RateLimitStoreDelegate
         touchBarVisibilityMenuItem = visibilityItem
 
         let refreshDataItem = NSMenuItem(
-            title: "立即刷新数据",
+            title: L10n.refreshData,
             action: #selector(refreshDataFromMenu(_:)),
             keyEquivalent: ""
         )
         refreshDataItem.target = self
         menu.addItem(refreshDataItem)
+        refreshDataMenuItem = refreshDataItem
 
         let reloadTouchBarItem = NSMenuItem(
-            title: "重新加载 Touch Bar",
+            title: L10n.reloadTouchBar,
             action: #selector(reloadTouchBarFromMenu(_:)),
             keyEquivalent: ""
         )
         reloadTouchBarItem.target = self
         menu.addItem(reloadTouchBarItem)
+        reloadTouchBarMenuItem = reloadTouchBarItem
+
+        let languageItem = NSMenuItem(title: L10n.language, action: nil, keyEquivalent: "")
+        let languageMenu = NSMenu()
+        for language in AppLanguage.allCases {
+            let item = NSMenuItem(
+                title: language.displayName,
+                action: #selector(changeLanguage(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = language.rawValue
+            languageMenu.addItem(item)
+            languageSubmenuItems[language] = item
+        }
+        languageItem.submenu = languageMenu
+        menu.addItem(languageItem)
+        languageMenuItem = languageItem
+        updateLanguageMenuState()
 
         let autoLaunchItem = NSMenuItem(
-            title: "随 Codex 自动启动",
+            title: L10n.followCodex,
             action: #selector(toggleAutoLaunchFromMenu(_:)),
             keyEquivalent: ""
         )
@@ -113,22 +141,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, RateLimitStoreDelegate
         autoLaunchMenuItem = autoLaunchItem
 
         let hideStatusItem = NSMenuItem(
-            title: "隐藏菜单栏图标",
+            title: L10n.hideStatusItem,
             action: #selector(hideStatusItemFromMenu(_:)),
             keyEquivalent: ""
         )
         hideStatusItem.target = self
         menu.addItem(hideStatusItem)
+        hideStatusItemMenuItem = hideStatusItem
 
         menu.addItem(.separator())
 
         let quitItem = NSMenuItem(
-            title: "退出",
+            title: L10n.quit,
             action: #selector(quitFromMenu(_:)),
             keyEquivalent: "q"
         )
         quitItem.target = self
         menu.addItem(quitItem)
+        quitMenuItem = quitItem
         return menu
     }
 
@@ -164,34 +194,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, RateLimitStoreDelegate
 
     private func updateTouchBarMenuTitle() {
         touchBarVisibilityMenuItem?.title = touchBarController.isTouchBarVisible
-            ? "隐藏 Touch Bar"
-            : "显示 Touch Bar"
+            ? L10n.hideTouchBar
+            : L10n.showTouchBar
     }
 
     private func updateRateLimitStatusMenu(with state: RateLimitDisplayState) {
-        switch state.connectionState {
-        case .idle:
-            connectionStatusMenuItem?.title = "状态：未连接"
-        case .connecting:
-            connectionStatusMenuItem?.title = "状态：连接中…"
-        case .connected:
-            connectionStatusMenuItem?.title = "状态：已连接"
-        case .failed:
-            connectionStatusMenuItem?.title = state.lastUpdated == nil
-                ? "状态：连接失败"
-                : "状态：连接失败（保留旧数据）"
-        }
-
-        if let lastUpdated = state.lastUpdated {
-            let formatter = DateFormatter()
-            formatter.locale = Locale(identifier: "zh_CN")
-            formatter.timeZone = .current
-            formatter.dateFormat = "HH:mm:ss"
-            lastUpdatedMenuItem?.title = "更新于：\(formatter.string(from: lastUpdated))"
-        } else {
-            lastUpdatedMenuItem?.title = "更新于：--"
-        }
+        connectionStatusMenuItem?.title = L10n.connectionStatus(
+            state.connectionState,
+            hasData: state.lastUpdated != nil
+        )
+        lastUpdatedMenuItem?.title = L10n.updated(state.lastUpdated)
         connectionStatusMenuItem?.toolTip = state.lastError
+    }
+
+    private func updateLanguageMenuState() {
+        let currentLanguage = AppLanguage.current
+        for (language, item) in languageSubmenuItems {
+            item.state = language == currentLanguage ? .on : .off
+        }
+    }
+
+    private func updateMenuLanguage() {
+        languageMenuItem?.title = L10n.language
+        refreshDataMenuItem?.title = L10n.refreshData
+        reloadTouchBarMenuItem?.title = L10n.reloadTouchBar
+        autoLaunchMenuItem?.title = L10n.followCodex
+        hideStatusItemMenuItem?.title = L10n.hideStatusItem
+        quitMenuItem?.title = L10n.quit
+        for (language, item) in languageSubmenuItems {
+            item.title = language.displayName
+        }
+        updateLanguageMenuState()
+        updateTouchBarMenuTitle()
+        updateRateLimitStatusMenu(with: latestState)
+    }
+
+    @objc private func changeLanguage(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let language = AppLanguage(rawValue: rawValue) else {
+            return
+        }
+        AppLanguage.set(language)
+        updateMenuLanguage()
+        touchBarController.applyLanguage()
     }
 
     @objc private func refreshDataFromMenu(_ sender: AnyObject?) {
