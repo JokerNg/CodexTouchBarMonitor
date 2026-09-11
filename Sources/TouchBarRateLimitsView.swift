@@ -1,6 +1,24 @@
 import AppKit
 import QuartzCore
 
+enum TouchBarPage: String, CaseIterable {
+    case cards, heatmap, cost
+
+    static func initial(defaults: UserDefaults = .standard) -> TouchBarPage {
+        return defaults.string(forKey: "defaultTouchBarPage").flatMap(TouchBarPage.init(rawValue:))
+            ?? defaults.string(forKey: "lastTouchBarPage").flatMap(TouchBarPage.init(rawValue:))
+            ?? (defaults.bool(forKey: "showUsageHeatmap") ? .heatmap : .cards)
+    }
+
+    var title: String {
+        switch self {
+        case .cards: return L10n.resetCard
+        case .heatmap: return L10n.isEnglish ? "6-month usage" : "半年用量图"
+        case .cost: return L10n.localCost
+        }
+    }
+}
+
 final class TouchBarRateLimitsView: NSView {
     var onRefresh: (() -> Void)?
 
@@ -11,6 +29,7 @@ final class TouchBarRateLimitsView: NSView {
     private let pageDots = NSStackView()
     private let cardPageDot = NSView()
     private let heatmapPageDot = NSView()
+    private let costPageDot = NSView()
     private let resetCreditExpirationLabel = NSTextField(labelWithString: "--")
     private let resetCreditDetails = NSStackView()
     private let resetCreditCard = NSStackView()
@@ -20,14 +39,23 @@ final class TouchBarRateLimitsView: NSView {
     private let rows = NSStackView()
     private let contentStack = NSStackView()
     private let heatmapView = UsageHeatmapView()
+    private let localCostView = LocalUsageCostView()
     private let heatmapToggleButton = NSButton()
-    private var preferredHeatmap = UserDefaults.standard.bool(forKey: "showUsageHeatmap")
-    private var showingHeatmap = false
+    private var preferredPage = TouchBarPage.initial()
+    private var currentPage = TouchBarPage.cards
+    private var localUsage: LocalUsageSnapshot?
+    private var localUsageWarning: String?
     private var hasResetCredits = false
+    private var pageRotationTimer: Timer?
 
     init() {
         super.init(frame: .zero)
         configure()
+        configurePageRotation()
+    }
+
+    deinit {
+        pageRotationTimer?.invalidate()
     }
 
     required init?(coder: NSCoder) {
@@ -36,11 +64,9 @@ final class TouchBarRateLimitsView: NSView {
 
     func update(with state: RateLimitDisplayState) {
         heatmapView.buckets = state.tokenUsage?.dailyUsageBuckets ?? []
-        heatmapToggleButton.isEnabled = !heatmapView.buckets.isEmpty
         updateResetCreditCard(state.resetCredits)
-        setHeatmapVisible(
-            !heatmapView.buckets.isEmpty && (!hasResetCredits || preferredHeatmap)
-        )
+        reconcilePage()
+        localCostView.update(snapshot: localUsage, warning: localUsageWarning)
 
         let proOnly = state.fiveHour == nil && state.weekly != nil
         contentStack.setCustomSpacing(proOnly ? 8 : 2, after: codexIconButton)
@@ -90,6 +116,30 @@ final class TouchBarRateLimitsView: NSView {
         }
     }
 
+    func updateLocalUsage(_ usage: LocalUsageSnapshot?, warning: String?) {
+        localUsage = usage
+        localUsageWarning = warning
+        localCostView.update(snapshot: usage, warning: warning)
+        reconcilePage()
+    }
+
+    func applyDefaultPage() {
+        preferredPage = TouchBarPage.initial()
+        reconcilePage()
+        configurePageRotation()
+    }
+
+    private func configurePageRotation() {
+        pageRotationTimer?.invalidate()
+        pageRotationTimer = nil
+        guard UserDefaults.standard.string(forKey: "defaultTouchBarPage") == "rotate" else { return }
+        let timer = Timer(timeInterval: 10, repeats: true) { [weak self] _ in
+            self?.toggleHeatmap()
+        }
+        pageRotationTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
     private func updateResetCreditCard(_ resetCredits: ResetCreditSummary?) {
         guard let resetCredits, resetCredits.availableCount > 0 else {
             hasResetCredits = false
@@ -109,7 +159,6 @@ final class TouchBarRateLimitsView: NSView {
         resetCreditExpirationLabel.textColor = resetCredits.isExpiringSoon
             ? NSColor.systemRed.withAlphaComponent(0.92)
             : NSColor(calibratedRed: 0.65, green: 0.80, blue: 0.9, alpha: 0.82)
-        resetCreditCard.isHidden = showingHeatmap
     }
 
     private func configure() {
@@ -194,10 +243,14 @@ final class TouchBarRateLimitsView: NSView {
         heatmapView.isHidden = true
         addSubview(heatmapView)
 
+        localCostView.translatesAutoresizingMaskIntoConstraints = false
+        localCostView.isHidden = true
+        addSubview(localCostView)
+
         pageDots.translatesAutoresizingMaskIntoConstraints = false
         pageDots.orientation = .vertical
         pageDots.spacing = 2
-        for dot in [cardPageDot, heatmapPageDot] {
+        for dot in [cardPageDot, heatmapPageDot, costPageDot] {
             dot.wantsLayer = true
             dot.layer?.cornerRadius = 1.5
             dot.translatesAutoresizingMaskIntoConstraints = false
@@ -242,6 +295,10 @@ final class TouchBarRateLimitsView: NSView {
             heatmapView.centerYAnchor.constraint(equalTo: centerYAnchor),
             heatmapView.widthAnchor.constraint(equalToConstant: 112),
             heatmapView.heightAnchor.constraint(equalToConstant: 30),
+            localCostView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            localCostView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            localCostView.widthAnchor.constraint(equalToConstant: 112),
+            localCostView.heightAnchor.constraint(equalToConstant: 30),
             heatmapToggleButton.trailingAnchor.constraint(equalTo: trailingAnchor),
             heatmapToggleButton.centerYAnchor.constraint(equalTo: centerYAnchor),
             heatmapToggleButton.widthAnchor.constraint(equalToConstant: 112),
@@ -295,29 +352,53 @@ final class TouchBarRateLimitsView: NSView {
     }
 
     @objc private func toggleHeatmap() {
-        guard !heatmapView.buckets.isEmpty else {
+        pageRotationTimer?.fireDate = Date().addingTimeInterval(10)
+        let pages = availablePages
+        guard pages.count > 1,
+              let currentIndex = pages.firstIndex(where: { page in page == currentPage }) else {
             return
         }
 
-        preferredHeatmap = !showingHeatmap
-        UserDefaults.standard.set(preferredHeatmap, forKey: "showUsageHeatmap")
-        setHeatmapVisible(preferredHeatmap)
+        let nextPage = pages[(currentIndex + 1) % pages.count]
+        UserDefaults.standard.set(nextPage.rawValue, forKey: "lastTouchBarPage")
+        preferredPage = nextPage
+        currentPage = nextPage
+        renderPage()
     }
 
-    private func setHeatmapVisible(_ visible: Bool) {
-        showingHeatmap = visible
+    private var availablePages: [TouchBarPage] {
+        var pages: [TouchBarPage] = []
+        if hasResetCredits { pages.append(.cards) }
+        if !heatmapView.buckets.isEmpty { pages.append(.heatmap) }
+        pages.append(.cost)
+        return pages
+    }
+
+    private func reconcilePage() {
+        let pages = availablePages
+        currentPage = pages.contains(preferredPage) ? preferredPage : (pages.first ?? .cost)
+        renderPage()
+    }
+
+    private func renderPage() {
+        let pages = availablePages
+        let showingHeatmap = currentPage == .heatmap
+        resetCreditCard.isHidden = currentPage != .cards || !hasResetCredits
         heatmapView.isHidden = !showingHeatmap
-        resetCreditCard.isHidden = showingHeatmap || !hasResetCredits
-        pageDots.isHidden = !hasResetCredits
-        heatmapToggleButton.isHidden = pageDots.isHidden
+        localCostView.isHidden = currentPage != .cost
+        pageDots.isHidden = pages.count < 2
+        heatmapToggleButton.isHidden = pages.count < 2
+        heatmapToggleButton.isEnabled = pages.count > 1
+        cardPageDot.isHidden = !pages.contains(.cards)
+        heatmapPageDot.isHidden = !pages.contains(.heatmap)
+        costPageDot.isHidden = !pages.contains(.cost)
         let active = NSColor(calibratedRed: 1.0, green: 0.68, blue: 0.16, alpha: 1).cgColor
         let inactive = NSColor(calibratedWhite: 0.25, alpha: 1).cgColor
-        cardPageDot.layer?.backgroundColor = showingHeatmap ? inactive : active
-        heatmapPageDot.layer?.backgroundColor = showingHeatmap ? active : inactive
-        heatmapToggleButton.toolTip = showingHeatmap ? L10n.returnToResetCards : L10n.switchHeatmap
-        heatmapToggleButton.setAccessibilityLabel(
-            showingHeatmap ? L10n.returnToResetCards : L10n.switchHeatmap
-        )
+        cardPageDot.layer?.backgroundColor = currentPage == .cards ? active : inactive
+        heatmapPageDot.layer?.backgroundColor = currentPage == .heatmap ? active : inactive
+        costPageDot.layer?.backgroundColor = currentPage == .cost ? active : inactive
+        heatmapToggleButton.toolTip = L10n.switchTouchBarPage
+        heatmapToggleButton.setAccessibilityLabel(L10n.switchTouchBarPage)
     }
 
     private static func codexIcon() -> NSImage {
@@ -701,4 +782,60 @@ private final class UsageHeatmapView: NSView {
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter
     }()
+}
+
+private final class LocalUsageCostView: NSView {
+    private let titleLabel = NSTextField(labelWithString: L10n.localCost)
+    private let detailLabel = NSTextField(labelWithString: "--")
+
+    func update(snapshot: LocalUsageSnapshot?, warning: String?) {
+        guard let snapshot else {
+            titleLabel.stringValue = L10n.isEnglish ? "Today ≈$--" : "今日 ≈$--"
+            detailLabel.stringValue = L10n.isEnglish ? "Loading…" : "读取中…"
+            toolTip = L10n.localCostTooltip
+            return
+        }
+        let total = LocalUsageSnapshot.total(snapshot.today)
+        let amount = L10n.localAmount(total, complete: snapshot.isComplete, decimals: 2)
+        titleLabel.stringValue = L10n.isEnglish ? "Today ≈\(amount)" : "今日 ≈\(amount)"
+        detailLabel.stringValue = "\(L10n.compactTokens(total.tokens)) tokens"
+        toolTip = ([L10n.localCostTooltip] + L10n.localUsageDetails(snapshot) + [warning].compactMap { $0 }).joined(separator: "\n")
+        setAccessibilityLabel(toolTip)
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        configure()
+    }
+
+    convenience init() {
+        self.init(frame: .zero)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    private func configure() {
+        titleLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.textColor = NSColor(calibratedRed: 0.78, green: 0.92, blue: 1.0, alpha: 1.0)
+        detailLabel.font = .monospacedDigitSystemFont(ofSize: 10, weight: .regular)
+        detailLabel.textColor = NSColor(calibratedRed: 0.16, green: 0.86, blue: 1.0, alpha: 1.0)
+        detailLabel.lineBreakMode = .byTruncatingTail
+
+        let stack = NSStackView(views: [titleLabel, detailLabel])
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 1
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            titleLabel.widthAnchor.constraint(lessThanOrEqualTo: stack.widthAnchor),
+            detailLabel.widthAnchor.constraint(lessThanOrEqualTo: stack.widthAnchor),
+            stack.centerYAnchor.constraint(equalTo: centerYAnchor)
+        ])
+    }
 }

@@ -65,6 +65,14 @@ final class TouchBarController: NSObject, NSTouchBarDelegate {
         touchBarView.update(with: state)
     }
 
+    func updateLocalUsage(_ usage: LocalUsageSnapshot?, warning: String?) {
+        touchBarView.updateLocalUsage(usage, warning: warning)
+    }
+
+    func applyDefaultPage() {
+        touchBarView.applyDefaultPage()
+    }
+
     func touchBar(_ touchBar: NSTouchBar, makeItemForIdentifier identifier: NSTouchBarItem.Identifier) -> NSTouchBarItem? {
         switch identifier {
         case TouchBarIdentifiers.limits:

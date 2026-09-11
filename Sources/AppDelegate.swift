@@ -1,8 +1,15 @@
 import AppKit
 
-final class AppDelegate: NSObject, NSApplicationDelegate, RateLimitStoreDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, RateLimitStoreDelegate, NSMenuDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private let store = RateLimitStore()
+    private let localUsage = LocalUsageCost()
+    private let usageMenu = NSMenu()
+    private var usageMenuItem: NSMenuItem?
+    private var usageSnapshot: LocalUsageSnapshot?
+    private var usageTimer: Timer?
+    private let defaultPageMenuItem = NSMenuItem()
+    private var usageWarning: String?
     private let lifecycleMonitor = CodexLifecycleMonitor()
     private var touchBarVisibilityMenuItem: NSMenuItem?
     private var connectionStatusMenuItem: NSMenuItem?
@@ -25,11 +32,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, RateLimitStoreDelegate
         store.delegate = self
         touchBarController.onRefresh = { [weak self] in
             self?.store.refreshManually()
+            self?.refreshLocalUsage(force: true)
         }
         store.onManualRefreshResult = { [weak self] success in
             self?.touchBarController.showRefreshResult(success)
         }
         configureStatusItem()
+        refreshLocalUsage()
+        let timer = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
+            self?.refreshLocalUsage(force: true)
+        }
+        usageTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+        NotificationCenter.default.addObserver(self, selector: #selector(refreshUsageAfterClockChange), name: .NSCalendarDayChanged, object: nil)
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(refreshUsageAfterClockChange), name: NSWorkspace.didWakeNotification, object: nil)
         configureLifecycleMonitor()
         lifecycleMonitor.start()
 
@@ -39,6 +55,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, RateLimitStoreDelegate
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        usageTimer?.invalidate()
+        NotificationCenter.default.removeObserver(self)
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
         touchBarController.hideSystemTouchBar()
         lifecycleMonitor.stop()
         store.stop()
@@ -72,6 +91,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, RateLimitStoreDelegate
 
     private func makeStatusMenu() -> NSMenu {
         let menu = NSMenu()
+        menu.delegate = self
 
         let connectionStatusItem = NSMenuItem(title: L10n.connectionStatus(.idle, hasData: false), action: nil, keyEquivalent: "")
         connectionStatusItem.isEnabled = false
@@ -82,6 +102,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, RateLimitStoreDelegate
         lastUpdatedItem.isEnabled = false
         menu.addItem(lastUpdatedItem)
         lastUpdatedMenuItem = lastUpdatedItem
+
+        let usageItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        usageItem.submenu = usageMenu
+        menu.addItem(usageItem)
+        usageMenuItem = usageItem
+        updateUsageMenu()
+
+        menu.addItem(defaultPageMenuItem)
+        updateDefaultPageMenu()
 
         menu.addItem(.separator())
 
@@ -162,6 +191,81 @@ final class AppDelegate: NSObject, NSApplicationDelegate, RateLimitStoreDelegate
         return menu
     }
 
+    func menuWillOpen(_ menu: NSMenu) {
+        refreshLocalUsage()
+    }
+
+    private func refreshLocalUsage(force: Bool = false) {
+        if let snapshot = usageSnapshot, !Calendar.current.isDateInToday(snapshot.day) {
+            usageSnapshot = nil
+            usageWarning = nil
+            touchBarController.updateLocalUsage(nil, warning: nil)
+            updateUsageMenu()
+        }
+        localUsage.refresh(force: force) { [weak self] usage, warning in
+            self?.usageSnapshot = usage
+            self?.usageWarning = warning
+            self?.touchBarController.updateLocalUsage(usage, warning: warning)
+            self?.updateUsageMenu()
+        }
+    }
+
+    @objc private func refreshUsageAfterClockChange(_ notification: Notification) {
+        refreshLocalUsage(force: true)
+    }
+
+    private func updateDefaultPageMenu() {
+        defaultPageMenuItem.title = L10n.defaultTouchBarPage
+        let menu = NSMenu()
+        let selected = UserDefaults.standard.string(forKey: "defaultTouchBarPage") ?? "remember"
+        for (key, title) in [("remember", L10n.rememberPage), ("rotate", L10n.autoRotatePages)] + TouchBarPage.allCases.map({ ($0.rawValue, $0.title) }) {
+            let item = NSMenuItem(title: title, action: #selector(changeDefaultPage(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = key
+            item.state = key == selected ? .on : .off
+            menu.addItem(item)
+        }
+        defaultPageMenuItem.submenu = menu
+    }
+
+    @objc private func changeDefaultPage(_ sender: NSMenuItem) {
+        guard let key = sender.representedObject as? String else { return }
+        if key == "remember" {
+            UserDefaults.standard.removeObject(forKey: "defaultTouchBarPage")
+        } else if key == "rotate" || TouchBarPage(rawValue: key) != nil {
+            UserDefaults.standard.set(key, forKey: "defaultTouchBarPage")
+        }
+        touchBarController.applyDefaultPage()
+        updateDefaultPageMenu()
+    }
+
+    private func updateUsageMenu() {
+        usageMenuItem?.title = L10n.isEnglish ? "Today's local usage · estimated cost" : "今日本地用量 · 估算费用"
+        usageMenu.removeAllItems()
+        func add(_ title: String) {
+            let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            usageMenu.addItem(item)
+        }
+        add(L10n.isEnglish ? "API estimate (USD), not subscription charges" : "API 价格估算（美元），非订阅账单")
+        if let snapshot = usageSnapshot {
+            L10n.localUsageDetails(snapshot).forEach(add)
+            usageMenu.addItem(.separator())
+        }
+        let modelUsage = usageSnapshot?.today ?? [:]
+        for model in modelUsage.keys.sorted() {
+            let usage = modelUsage[model]!
+            let cost = usage.cost.map { String(format: "$%.4f", $0) }
+                ?? (L10n.isEnglish ? "Price unknown" : "价格未知")
+            let label = model == "codex-auto-review" ? "\(model) (≈ gpt-5.6-luna)" : model
+            add("\(label): \(NumberFormatter.localizedString(from: NSNumber(value: usage.tokens), number: .decimal)) tokens · \(cost) · \(L10n.cacheRate(usage))")
+        }
+        if modelUsage.isEmpty {
+            add(usageSnapshot != nil ? (L10n.isEnglish ? "No usage today" : "今日暂无用量") : (L10n.isEnglish ? "Loading…" : "读取中…"))
+        }
+        if let usageWarning { add(usageWarning) }
+    }
+
     private func configureLifecycleMonitor() {
         lifecycleMonitor.onCodexStarted = { [weak self] in
             self?.codexDidStart()
@@ -215,6 +319,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, RateLimitStoreDelegate
     }
 
     private func updateMenuLanguage() {
+        updateUsageMenu()
+        updateDefaultPageMenu()
         languageMenuItem?.title = L10n.language
         refreshDataMenuItem?.title = L10n.refreshData
         reloadTouchBarMenuItem?.title = L10n.reloadTouchBar
@@ -241,6 +347,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, RateLimitStoreDelegate
 
     @objc private func refreshDataFromMenu(_ sender: AnyObject?) {
         store.refresh()
+        refreshLocalUsage(force: true)
     }
 
     @objc private func reloadTouchBarFromMenu(_ sender: AnyObject?) {
